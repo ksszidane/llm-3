@@ -60,13 +60,48 @@ class AgentQAWebInterface:
             gr.Markdown("LangSmith 기반 테스트케이스 관리 및 GPT-4o 자동 평가")
             
             with gr.Tabs():
+                # EV RAG 챗봇 탭 (첫 번째)
+                with gr.Tab("🧠 전기차 RAG 대화"):
+                    with gr.Row():
+                        with gr.Column(scale=2):
+                            gr.Markdown("### 전기차 RAG Agent와 대화하기")
+                            ev_chatbot = gr.Chatbot(label="Agent", type="messages", height=420)
+                            ev_query = gr.Textbox(label="질문", placeholder="전기차 관련해서 무엇이든 물어보세요")
+                            ev_send = gr.Button("질문 보내기", variant="primary")
+                        with gr.Column(scale=1):
+                            gr.Markdown("### 참고 출처")
+                            ev_citations = gr.Dataframe(headers=["rank", "source", "chunk_id"], interactive=False)
+
+                    # EV RAG 핸들러
+                    def _ev_chat(history: list[dict], query: str):
+                        try:
+                            from ev_agent_orchestrator import EVAgentOrchestrator
+                            orchestrator = EVAgentOrchestrator()
+                            answer, citations = orchestrator.chat(query)
+                            new_history = (history or []) + [{"role": "user", "content": query}, {"role": "assistant", "content": answer}]
+                            rows = [[c["rank"], c["source"], c["chunk_id"]] for c in citations]
+                            return new_history, "", rows
+                        except Exception as e:
+                            new_history = (history or []) + [{"role": "assistant", "content": f"오류: {e}"}]
+                            return new_history, query, []
+
+                    ev_send.click(_ev_chat, inputs=[ev_chatbot, ev_query], outputs=[ev_chatbot, ev_query, ev_citations])
+                    # Enter 제출 지원
+                    ev_query.submit(_ev_chat, inputs=[ev_chatbot, ev_query], outputs=[ev_chatbot, ev_query, ev_citations])
+
                 # 메인 실행 탭
                 with gr.Tab("🚀 메인 실행"):
                     with gr.Row():
                         with gr.Column(scale=1):
                             gr.Markdown("### 3. 데이터셋에 TestCase 생성 및 업데이트")
+                            
+                            # 3. 데이터셋 설명
                             gr.Markdown("`TestCase.xlsx` 파일의 내용을 LangSmith `Agent_QA_Scenario` 데이터셋에 저장합니다.")
-                            save_tc_btn = gr.Button("TestCase.xlsx → LangSmith 저장", variant="primary", size="lg")
+                            
+                            # 1. 버튼
+                            save_tc_btn = gr.Button("TestCase → LangSmith 저장", variant="primary", size="lg")
+                            
+                            # 4. 실행 결과
                             save_tc_log = gr.Textbox(
                                 label="실행 결과", 
                                 lines=8, 
@@ -74,11 +109,21 @@ class AgentQAWebInterface:
                                 max_lines=20,
                                 autoscroll=True
                             )
+                            
+                            # 2. 파일 업로드
+                            with gr.Row():
+                                file_upload = gr.File(
+                                    label="📤 Excel 파일 업로드 (선택사항)",
+                                    file_types=[".xlsx", ".xls"],
+                                    type="filepath"
+                                )
+                            
+                            gr.Markdown("📝 **참고**: 파일을 업로드하지 않으면 기본 `TestCase.xlsx` 파일을 사용합니다.")
 
                         with gr.Column(scale=1):
                             gr.Markdown("### 4. Judge 프롬프트 실행 후 평가 실행/저장")
-                            gr.Markdown("LangSmith에서 테스트케이스를 가져와 GPT-4o로 평가하고 결과를 저장합니다.")
-                            run_eval_btn = gr.Button("GPT-4o 평가 실행/저장", variant="primary", size="lg")
+                            gr.Markdown("LangSmith에서 테스트케이스를 가져와 전기차 RAG Agent로 답변 생성 후 평가 결과를 저장합니다.")
+                            run_eval_btn = gr.Button("RAG 기반 평가 실행/저장", variant="primary", size="lg")
                             run_eval_log = gr.Textbox(
                                 label="실행 결과", 
                                 lines=8, 
@@ -86,15 +131,16 @@ class AgentQAWebInterface:
                                 max_lines=20,
                                 autoscroll=True
                             )
-
-                    with gr.Row():
-                        gr.Markdown("### 📋 전체 실행 순서")
-                        gr.Markdown("""
-                        1. **프롬프트 관리**: 메뉴 2번에서 `accuracy_judge_prompt` 생성/업데이트
-                        2. **데이터 준비**: 위 3번 버튼으로 TestCase.xlsx → LangSmith 저장
-                        3. **평가 실행**: 위 4번 버튼으로 GPT-4o 평가 및 결과 저장
-                        4. **결과 확인**: 아래 평가 결과 섹션에서 확인
-                        """)
+                            
+                            # 전체 실행 순서를 우측 하단으로 이동
+                            gr.Markdown("---")
+                            gr.Markdown("### 📋 전체 실행 순서")
+                            gr.Markdown("""
+                            1. **프롬프트 관리**: 메뉴 2번에서 `accuracy_judge_prompt` 생성/업데이트
+                            2. **데이터 준비**: 위 3번 버튼으로 TestCase.xlsx → LangSmith 저장
+                            3. **평가 실행**: 위 4번 버튼으로 GPT-4o 평가 및 결과 저장
+                            4. **결과 확인**: 아래 평가 결과 섹션에서 확인
+                            """)
 
                 # 프롬프트 관리 탭
                 with gr.Tab("🔧 프롬프트 관리"):
@@ -149,11 +195,11 @@ class AgentQAWebInterface:
                             history_load_btn = gr.Button("히스토리 로드", variant="primary")
                             history_summary = gr.Textbox(label="요약", lines=3, interactive=False)
                         with gr.Column(scale=2):
-                            history_plot = gr.Plot(label="점수 타임라인")
+                            history_plot = gr.Plot(label="점수 추이")
                             history_df = gr.Dataframe(label="히스토리 상세", interactive=False, wrap=True)
                             history_table = gr.HTML("")
 
-                # 서버 관리 탭
+                # 서버 관리 탭 (원복)
                 with gr.Tab("⚙️ 서버 관리"):
                     with gr.Row():
                         with gr.Column(scale=1):
@@ -171,7 +217,7 @@ class AgentQAWebInterface:
                                 max_lines=15,
                                 autoscroll=True
                             )
-                
+
                 # 시스템 정보 탭
                 with gr.Tab("ℹ️ 시스템 정보"):
                     gr.Markdown("""
@@ -205,11 +251,26 @@ class AgentQAWebInterface:
             # 이벤트 핸들러 설정
             
             # 메인 실행 핸들러 - 실시간 로그 스트리밍 (-u로 자식 프로세스 버퍼링 해제)
-            def _save_tc_stream():
+            def _save_tc_stream(uploaded_file):
                 env = os.environ.copy()
                 env["PYTHONUNBUFFERED"] = "1"
+                
+                # 업로드된 파일 경로를 환경변수로 전달
+                if uploaded_file:
+                    env["UPLOADED_EXCEL_PATH"] = uploaded_file
+                    file_info = f"업로드된 파일: {os.path.basename(uploaded_file)}"
+                else:
+                    file_info = "기본 TestCase.xlsx 사용"
+                
+                # 업로드 경로를 직접 인자로 전달하여 로그의 파일명이 정확히 표시되도록 조정
+                arg_code = (
+                    "import sys, os; sys.path.append('new_project'); "
+                    "from real_implementation import save_testcases_only; "
+                    "p=os.getenv('UPLOADED_EXCEL_PATH'); "
+                    "save_testcases_only(p)"
+                )
                 proc = subprocess.Popen(
-                    [sys.executable, "-u", "-c", "import sys; sys.path.append('new_project'); from real_implementation import save_testcases_only; save_testcases_only()"],
+                    [sys.executable, "-u", "-c", arg_code],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
@@ -218,7 +279,11 @@ class AgentQAWebInterface:
                     cwd="/Users/1112049/llm-3",
                     env=env,
                 )
-                lines = [f"🚀 TestCase 저장 실행 시작 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})", "="*60]
+                lines = [
+                    f"🚀 TestCase 저장 실행 시작 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})",
+                    f"📁 {file_info}",
+                    "="*60
+                ]
                 yield "\n".join(lines)
                 for line in iter(proc.stdout.readline, ""):
                     if not line:
@@ -259,7 +324,7 @@ class AgentQAWebInterface:
                     lines.append(f"❌ GPT-4o 평가 실패! (종료 코드: {return_code})")
                 yield "\n".join(lines[-200:])
 
-            save_tc_btn.click(_save_tc_stream, outputs=[save_tc_log])
+            save_tc_btn.click(_save_tc_stream, inputs=[file_upload], outputs=[save_tc_log])
             run_eval_btn.click(_run_eval_stream, outputs=[run_eval_log])
 
             # 프롬프트 관리 핸들러
@@ -400,13 +465,15 @@ class AgentQAWebInterface:
                     # 길이 보정 (누락된 trace를 빈 문자열로 채움)
                     while len(traces) < len(scores):
                         traces.append("")
-                    df = pd.DataFrame({"timestamp": times, "score": scores, "reason": reasons, "answer": answers})
+                    # 그래프는 시간축 대신 실행 순번 기준으로 표시
+                    run_indices = list(range(1, len(scores) + 1))
+                    df = pd.DataFrame({"run": run_indices, "timestamp": times, "score": scores, "reason": reasons, "answer": answers})
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=df["timestamp"], y=df["score"], mode="lines+markers"))
+                    fig.add_trace(go.Scatter(x=df["run"], y=df["score"], mode="lines+markers"))
                     # 타이틀에 질문 요약 추가
                     short_q = (raw_question[:120] + "...") if isinstance(raw_question, str) and len(raw_question) > 120 else raw_question
-                    title_text = f"{case_id} 점수 히스토리" + (f"<br><sub>{short_q}</sub>" if short_q else "")
-                    fig.update_layout(yaxis=dict(range=[-0.1,5.1]), title=title_text)
+                    title_text = f"{case_id} 점수 추이" + (f"<br><sub>{short_q}</sub>" if short_q else "")
+                    fig.update_layout(yaxis=dict(range=[-0.1,5.1]), xaxis_title="실행 순번", title=title_text)
                     summary = f"횟수: {len(scores)} | 최근: {scores[-1] if scores else '-'} / 평균: {df['score'].mean():.2f}"
                     # HTML 테이블 렌더링 (각 행에 Trace 열기 버튼)
                     rows_html = [
