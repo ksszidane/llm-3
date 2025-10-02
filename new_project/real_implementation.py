@@ -256,8 +256,23 @@ class RealAgentQASystem:
             테스트케이스 리스트 [{"case_id": str, "question": str}, ...]
         """
         try:
-            df = pd.read_excel(excel_path)
-            print(f"📊 Excel 파일 로드 완료: {len(df)}개 행")
+            # 여러 시트를 모두 읽어 병합
+            all_sheets = pd.read_excel(excel_path, sheet_name=None)
+            if isinstance(all_sheets, dict):
+                frames = []
+                for sheet_name, sdf in all_sheets.items():
+                    if sdf is None or len(sdf) == 0:
+                        continue
+                    sdf["__sheet__"] = str(sheet_name)
+                    frames.append(sdf)
+                if not frames:
+                    print("⚠️  모든 시트가 비어 있습니다.")
+                    return []
+                df = pd.concat(frames, ignore_index=True)
+                print(f"📊 Excel 파일 로드 완료: {len(df)}개 행 | 시트 수: {len(all_sheets)}")
+            else:
+                df = all_sheets
+                print(f"📊 Excel 파일 로드 완료: {len(df)}개 행 | 시트 수: 1")
             print(f"컬럼: {list(df.columns)}")
             
             # 컬럼명 정규화 (대소문자, 공백 처리)
@@ -267,15 +282,24 @@ class RealAgentQASystem:
             required_columns = ['case_id', 'question', 'input']
             available_columns = df.columns.tolist()
             
-            # 컬럼 매핑 확인
-            case_id_col = None
-            question_col = None
-            
-            for col in available_columns:
-                if 'case' in col or 'id' in col:
-                    case_id_col = col
-                if 'question' in col or 'input' in col or 'query' in col:
-                    question_col = col
+            # 컬럼 매핑 확인 (정확매칭 우선, 없으면 유사 매칭)
+            case_id_col = 'case_id' if 'case_id' in available_columns else None
+            question_col = 'question' if 'question' in available_columns else None
+            if question_col is None:
+                for cand in ['input', 'query']:
+                    if cand in available_columns:
+                        question_col = cand
+                        break
+            if case_id_col is None:
+                for col in available_columns:
+                    if 'case' in col or 'id' in col:
+                        case_id_col = col
+                        break
+            if question_col is None:
+                for col in available_columns:
+                    if 'question' in col or 'input' in col or 'query' in col:
+                        question_col = col
+                        break
             
             print(f"🔍 감지된 컬럼 - case_id: {case_id_col}, question: {question_col}")
             
@@ -286,18 +310,31 @@ class RealAgentQASystem:
                 question_col = available_columns[1] if len(available_columns) > 1 else available_columns[0]
                 print(f"💡 기본 컬럼 사용 - case_id: {case_id_col}, question: {question_col}")
             
+            # 완전 공백 행 제거
+            df = df.dropna(how='all')
+
             testcases = []
+            missing_case_id = 0
+            missing_question = 0
             for _, row in df.iterrows():
-                case_id = str(row[case_id_col]).strip()
-                question = str(row[question_col]).strip()
+                case_id = str(row.get(case_id_col, '')).strip()
+                question = str(row.get(question_col, '')).strip()
                 
-                if case_id and question and case_id != 'nan' and question != 'nan':
-                    testcases.append({
-                        "case_id": case_id,
-                        "question": question
-                    })
+                if not case_id or case_id.lower() == 'nan' or case_id == 'None':
+                    missing_case_id += 1
+                    continue
+                if not question or question.lower() == 'nan' or question == 'None':
+                    missing_question += 1
+                    continue
+                testcases.append({
+                    "case_id": case_id,
+                    "question": question
+                })
             
             print(f"✅ 유효한 테스트케이스 {len(testcases)}개 로드 완료")
+            dropped = missing_case_id + missing_question
+            if dropped > 0:
+                print(f"ℹ️  제외된 행 수: {dropped} (case_id 없음: {missing_case_id}, question 없음: {missing_question})")
             return testcases
             
         except Exception as e:
@@ -716,24 +753,37 @@ def main():
     except Exception as e:
         print(f"❌ 시스템 실행 중 오류: {e}")
 
-def save_testcases_only():
+def save_testcases_only(uploaded_excel_path: Optional[str] = None):
     """
     3. TestCase.xlsx를 Agent_QA_Scenario 데이터셋에 저장하는 기능만 실행
     """
-    excel_path = Path(__file__).parent / "TestCase.xlsx"
+    # 우선순위: 인자 > 환경변수 > 기본 파일
+    env_path = os.getenv("UPLOADED_EXCEL_PATH")
+    if uploaded_excel_path and os.path.exists(uploaded_excel_path):
+        excel_path = Path(uploaded_excel_path)
+        print(f"📤 업로드된 파일 사용: {excel_path.name}")
+        print(f"   경로: {excel_path}")
+    elif env_path and os.path.exists(env_path):
+        excel_path = Path(env_path)
+        print(f"📤 업로드된 파일 사용: {excel_path.name}")
+        print(f"   경로: {excel_path}")
+    else:
+        excel_path = Path(__file__).parent / "TestCase.xlsx"
+        print(f"📁 기본 파일 사용: TestCase.xlsx")
+        print(f"   경로: {excel_path}")
     
     if not excel_path.exists():
-        print(f"❌ TestCase.xlsx 파일을 찾을 수 없습니다: {excel_path}")
+        print(f"❌ Excel 파일을 찾을 수 없습니다: {excel_path}")
         return
     
     try:
-        print("📥 TestCase.xlsx → Agent_QA_Scenario 데이터셋 저장 시작")
+        print("📥 TestCase → Agent_QA_Scenario 데이터셋 저장 시작")
         print("="*60)
         
         system = RealAgentQASystem()
         
         # 1. Excel에서 테스트케이스 로드
-        print("1️⃣  TestCase.xlsx에서 테스트케이스 로드")
+        print(f"1️⃣  Excel 파일에서 테스트케이스 로드: {excel_path.name}")
         testcases = system.load_testcases_from_excel(str(excel_path))
         
         if not testcases:
@@ -778,16 +828,22 @@ def run_evaluation_only():
         print(f"📋 정렬된 테스트케이스 순서: {[tc['case_id'] for tc in testcases]}")
         
         
-        # 2. GPT-4o로 질의 및 Judge 평가 실행
-        print(f"\n2️⃣  GPT-4o로 질의 및 Judge 평가 실행")
+        # 2. 전기차 RAG Agent를 통한 질의 및 Judge 평가 실행
+        print(f"\n2️⃣  전기차 RAG Agent로 질의 및 Judge 평가 실행")
         results = []
         
         for i, tc in enumerate(testcases, 1):
             print(f"\n[{i}/{len(testcases)}] 처리 중: {tc['case_id']}")
             print(f"❓ 질문: {tc['question']}")
             
-            # GPT-4o로 답변 생성
-            answer = system.generate_answer_with_gpt4o(tc["question"])
+            # 전기차 RAG Agent로 답변 생성
+            try:
+                from ev_rag_agent import get_ev_agent
+                agent = get_ev_agent()
+                answer, _ = agent.answer(tc["question"]) 
+            except Exception as e:
+                print(f"RAG Agent 오류로 GPT-4o 직접 답변으로 폴백: {e}")
+                answer = system.generate_answer_with_gpt4o(tc["question"]) 
             
             # Judge로 평가
             judge_result = system.judge_answer_with_gpt4o(tc["question"], answer)
