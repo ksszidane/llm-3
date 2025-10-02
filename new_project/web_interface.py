@@ -262,15 +262,8 @@ class AgentQAWebInterface:
                 else:
                     file_info = "기본 TestCase.xlsx 사용"
                 
-                # 업로드 경로를 직접 인자로 전달하여 로그의 파일명이 정확히 표시되도록 조정
-                arg_code = (
-                    "import sys, os; sys.path.append('new_project'); "
-                    "from real_implementation import save_testcases_only; "
-                    "p=os.getenv('UPLOADED_EXCEL_PATH'); "
-                    "save_testcases_only(p)"
-                )
                 proc = subprocess.Popen(
-                    [sys.executable, "-u", "-c", arg_code],
+                    [sys.executable, "-u", "-c", "import sys; sys.path.append('new_project'); from real_implementation import save_testcases_only; save_testcases_only()"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
